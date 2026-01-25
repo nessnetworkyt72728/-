@@ -2,4 +2,10 @@
   "image_url": "UI_FounderPromo_BannerAd",
   "is_active": true,
   "text_content": "Join Us In Discord!"
+},
+{
+  "image_url": "UI_WWtutorialbug",
+  "is_active": true,
+  "text_content": "Test!"
 }
+
