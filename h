@@ -48,7 +48,6 @@ local Ringouts  = 3
 local MatchTime = 420
 
 local IsStarting = false
-local MatchStarting = false
 
 -- ---------------------------------------------------------------------------
 -- Helpers
@@ -79,23 +78,19 @@ end
 -- ---------------------------------------------------------------------------
 
 local function GetOrCreateFacilitator(GI)
-    -- 1) Already attached to the GameInstance
     local Fac = GI.LocalPlayFacilitator
     if Fac and Fac:IsValid() then
         print("[BotPlay] Using GI.LocalPlayFacilitator")
         return Fac
     end
 
-    -- 2) One already floating in the world
     Fac = FindFirstOf("LocalPlayFacilitator_C")
     if Fac and Fac:IsValid() then
         print("[BotPlay] Using existing world LocalPlayFacilitator_C")
         return Fac
     end
 
-    -- 3) Construct a new one via StaticConstructObject
-    print("[BotPlay] Constructing LocalPlayFacilitator_C via StaticConstructObject...")
-
+    print("[BotPlay] Constructing LocalPlayFacilitator_C...")
     local ClassObj = StaticFindObject("/Game/Panda_Main/Blueprints/LocalPlay/LocalPlayFacilitator.LocalPlayFacilitator_C")
     if not ClassObj or not ClassObj:IsValid() then
         ClassObj = FindFirstOf("LocalPlayFacilitator_C")
@@ -106,34 +101,18 @@ local function GetOrCreateFacilitator(GI)
 
     if not ClassObj or not ClassObj:IsValid() then
         print("[BotPlay][Error] Could not find LocalPlayFacilitator_C class object.")
-        print("[BotPlay]        Load into the Main Menu at least once so the Blueprint is in memory.")
         return nil
     end
 
-    local ok, newFac = pcall(function()
-        return StaticConstructObject(ClassObj, GI)
-    end)
-
+    local ok, newFac = pcall(function() return StaticConstructObject(ClassObj, GI) end)
     if not ok or not newFac or not newFac:IsValid() then
         print("[BotPlay][Error] StaticConstructObject failed: " .. tostring(newFac))
         return nil
     end
 
-    local ok2, err2 = pcall(function()
-        newFac.GameInstance = GI
-    end)
-    if not ok2 then
-        print("[BotPlay][WARN] Could not set GameInstance on facilitator: " .. tostring(err2))
-    end
-
-    local ok3, err3 = pcall(function()
-        GI.LocalPlayFacilitator = newFac
-    end)
-    if not ok3 then
-        print("[BotPlay][WARN] Could not pin Facilitator onto GI: " .. tostring(err3))
-    end
-
-    print("[BotPlay] LocalPlayFacilitator_C constructed successfully.")
+    pcall(function() newFac.GameInstance = GI end)
+    pcall(function() GI.LocalPlayFacilitator = newFac end)
+    print("[BotPlay] LocalPlayFacilitator_C constructed.")
     return newFac
 end
 
@@ -145,18 +124,6 @@ local function ApplyTeamsAndBots()
     ExecuteWithDelay(2000, function()
         print("[BotPlay] ApplyTeamsAndBots: Starting...")
 
-        local GI = FindFirstOf("PandaGameInstance_C")
-        if not GI or not GI:IsValid() then
-            print("[BotPlay][Error] No GameInstance")
-            return
-        end
-
-        local PDM = GI.PlayerDataManager
-        if not PDM or not PDM:IsValid() then
-            print("[BotPlay][Error] No PlayerDataManager")
-            return
-        end
-
         local AllMPD = FindAllOf("MatchPlayerData_C")
         if not AllMPD then
             print("[BotPlay][Error] FindAllOf returned nil")
@@ -164,8 +131,8 @@ local function ApplyTeamsAndBots()
         end
         print("[BotPlay] Found " .. #AllMPD .. " total MatchPlayerData instances")
 
-        -- Filter to only MPDs that belong to the current match
-        -- by checking if their PlayerState is valid and alive
+        -- Filter to only MPDs belonging to the current match
+        -- Old MPDs from previous matches have invalid/nil PlayerState
         local matchMPDs = {}
         for _, MPD in ipairs(AllMPD) do
             if MPD and MPD:IsValid() then
@@ -176,6 +143,11 @@ local function ApplyTeamsAndBots()
                 end
             end
         end
+
+        -- Sort by PlayerIndex so config always lines up correctly
+        table.sort(matchMPDs, function(a, b)
+            return a.PlayerIndex < b.PlayerIndex
+        end)
 
         print("[BotPlay] Found " .. #matchMPDs .. " active match MPDs")
 
@@ -197,7 +169,7 @@ local function ApplyTeamsAndBots()
             end
 
             if playerConfig then
-                print("[BotPlay] Config found: Team=" .. playerConfig.Team .. " IsBot=" .. tostring(playerConfig.IsBot))
+                print("[BotPlay] Config: Team=" .. playerConfig.Team .. " IsBot=" .. tostring(playerConfig.IsBot))
 
                 -- Only assign team index for human players
                 if not playerConfig.IsBot then
@@ -214,8 +186,8 @@ local function ApplyTeamsAndBots()
                 -- Write bot properties directly (Set Is Bot function crashes the game)
                 if playerConfig.IsBot then
                     local ok, err = pcall(function()
-                        MPD.isBot = true
-                        MPD.BotBehavior = playerConfig.BotDifficulty
+                        MPD.isBot            = true
+                        MPD.BotBehavior      = playerConfig.BotDifficulty
                         MPD.MinBotDifficulty = playerConfig.MinDifficulty
                         MPD.MaxBotDifficulty = playerConfig.MaxDifficulty
                         MPD.BotFromDisconnection = false
@@ -232,7 +204,6 @@ local function ApplyTeamsAndBots()
             end
         end
 
-        MatchStarting = false
         print("[BotPlay] ApplyTeamsAndBots: Done.")
     end)
 end
@@ -244,7 +215,6 @@ end
 local function StartMatch()
     if IsStarting then return end
     IsStarting = true
-    MatchStarting = true
     print("[BotPlay] StartMatch triggered.")
 
     local GI = FindFirstOf("PandaGameInstance_C")
@@ -261,7 +231,6 @@ local function StartMatch()
         return
     end
 
-    -- Attempt to get / construct the facilitator BEFORE touching preferences
     local Fac = GetOrCreateFacilitator(GI)
     if not Fac then
         print("[BotPlay][Error] Could not obtain LocalPlayFacilitator_C. Aborting.")
@@ -269,18 +238,15 @@ local function StartMatch()
         return
     end
 
-    -- Count enabled players
     local enabledCount = 0
     for i = 1, #Players do
         if Players[i].Enabled then enabledCount = enabledCount + 1 end
     end
     print("[BotPlay] " .. enabledCount .. " players enabled")
 
-    -- Pick random map
     local SelectedMap = RandomMap()
     print("[BotPlay] Selected map: " .. SelectedMap)
 
-    -- Apply settings to PreferencesManager
     BPCall(PM, "Set-LocalPlay-GameMode",  GameMode)
     BPCall(PM, "Set-LocalPlay-TeamStyle", TeamStyle)
     BPCall(PM, "Set-LocalPlay-Time",      MatchTime)
@@ -299,9 +265,7 @@ local function StartMatch()
 
     print("[BotPlay] Settings applied. Calling BeginMatch...")
 
-    -- Re-fetch in case GI.LocalPlayFacilitator was updated by GetOrCreateFacilitator
     Fac = GI.LocalPlayFacilitator or Fac
-
     local ok, err = pcall(function() Fac:BeginMatch() end)
     if ok then
         print("[BotPlay] BeginMatch called successfully.")
