@@ -5,7 +5,7 @@
 },
 {
   "image_url": "UI_WWtutorialbug",
-  "is_active": true,
+  "is_active": false,
   "text_content": "Test!"
 }
 
